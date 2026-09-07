@@ -127,3 +127,7 @@ machine. The private key is deleted from disk after import and kept only in
 your keychain. If you would rather not touch your trust store, skip it and
 accept one grant per rebuild. `build.sh` detects the identity automatically and
 falls back to ad-hoc signing when it is absent.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
