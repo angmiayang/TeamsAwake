@@ -1,0 +1,14 @@
+# Build output — regenerate with ./scripts/build.sh
+build/
+
+# Signing material must never be committed. The private key lives in the
+# keychain, not on disk; these patterns are defence in depth.
+*.pem
+*.p12
+*.key
+req.cnf
+
+# Internal working notes, not part of the published project.
+OUTPUT.md
+
+.DS_Store
