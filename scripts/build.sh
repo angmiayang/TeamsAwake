@@ -3,7 +3,6 @@
 #
 #   ./scripts/build.sh                    build into ./build
 #   ./scripts/build.sh --install          build, install to /Applications, launch
-#   ./scripts/build.sh --install-launcher install the 30s "start with Teams" agent
 #
 # Most people should run ./install.sh instead, which wraps this.
 
@@ -15,40 +14,13 @@ cd "$ROOT"
 APP_NAME="TeamsAwake"
 BUNDLE_ID="local.teamsawake"
 OUT="build/$APP_NAME.app"
-VERSION="1.0"
-SUPPORT="$HOME/Library/Application Support/TeamsAwake"
-AGENT="$HOME/Library/LaunchAgents/$BUNDLE_ID.launcher.plist"
+VERSION="${TEAMSAWAKE_VERSION:-1.0}"   # release builds set this from the git tag
 
 command -v swiftc >/dev/null || {
   echo "error: swiftc not found. Install the Xcode Command Line Tools:" >&2
   echo "  xcode-select --install" >&2
   exit 1
 }
-
-if [ "${1:-}" = "--install-launcher" ]; then
-  mkdir -p "$SUPPORT" "$(dirname "$AGENT")"
-  # Run the poller from a stable private location, never from the source tree:
-  # launchd executes it every 30s as you, so it must not live anywhere a git
-  # checkout, clone or editor tooling could rewrite it.
-  install -m 700 src/launcher.sh "$SUPPORT/launcher.sh"
-  cat > "$AGENT" <<PL
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$BUNDLE_ID.launcher</string>
-  <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>$SUPPORT/launcher.sh</string></array>
-  <key>StartInterval</key><integer>30</integer>
-  <key>RunAtLoad</key><true/>
-</dict>
-</plist>
-PL
-  launchctl unload "$AGENT" 2>/dev/null || true
-  launchctl load "$AGENT"
-  echo "Launcher installed. TeamsAwake will start within 30s of Teams opening."
-  exit 0
-fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources" build
@@ -105,7 +77,10 @@ PL
 # it keeps the Accessibility grant alive across rebuilds. Plain ad-hoc signing
 # is correct for everyone else.
 IDENTITY="TeamsAwake Local Signing"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+# TEAMSAWAKE_ADHOC=1 forces ad-hoc signing, so a release build never depends on
+# (or leaks the name of) whatever certificate happens to be in a keychain.
+if [ "${TEAMSAWAKE_ADHOC:-0}" != "1" ] && \
+   security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
   echo "==> signing with local certificate identity"
   codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID" --timestamp=none "$OUT"
   CERT_SIGNED=1

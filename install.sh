@@ -1,8 +1,7 @@
 #!/bin/bash
 # TeamsAwake installer.
 #
-#   ./install.sh                  build, install to /Applications, launch
-#   ./install.sh --with-launcher  also start TeamsAwake automatically with Teams
+#   ./install.sh    build, install to /Applications, launch
 #
 # Builds from source on purpose. A locally built app is not quarantined by
 # Gatekeeper, so there is no "unidentified developer" wall to click through —
@@ -13,11 +12,9 @@ cd "$(cd "$(dirname "$0")" && pwd)"
 
 APP="TeamsAwake"
 BUNDLE_ID="local.teamsawake"
-WITH_LAUNCHER=0
 
 for a in "$@"; do
   case "$a" in
-    --with-launcher) WITH_LAUNCHER=1 ;;
     -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
@@ -47,21 +44,22 @@ if [ ! -d "/Applications/Microsoft Teams.app" ]; then
   echo
 fi
 
-# --- clean up any agent from an older layout ---------------------------------
-for OLD in "$HOME/Library/LaunchAgents/local.$(id -un).teamsawake.launcher.plist"; do
+# --- remove the old "start with Teams" launcher, if an earlier version added it --
+# It is no longer needed: TeamsAwake stays resident and hides its own icon while
+# Teams is closed. Both labels are ours: the current one and the older per-user one.
+SUPPORT="$HOME/Library/Application Support/TeamsAwake"
+for OLD in "$HOME/Library/LaunchAgents/$BUNDLE_ID.launcher.plist" \
+           "$HOME/Library/LaunchAgents/local.$(id -un).teamsawake.launcher.plist"; do
   if [ -f "$OLD" ]; then
     launchctl unload "$OLD" 2>/dev/null || true
     rm -f "$OLD"
-    echo "removed a launch agent from a previous version"
+    echo "removed the old launcher agent (no longer needed)"
   fi
 done
+rm -f "$SUPPORT/launcher.sh" "$SUPPORT/teamsawake-launcher.sh"
 
 # --- build and install -------------------------------------------------------
 ./scripts/build.sh --install
-
-if [ "$WITH_LAUNCHER" = "1" ]; then
-  ./scripts/build.sh --install-launcher
-fi
 
 # --- the one manual step -----------------------------------------------------
 cat <<'MSG'

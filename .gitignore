@@ -1,5 +1,6 @@
 # Build output — regenerate with ./scripts/build.sh
 build/
+dist/
 
 # Signing material must never be committed. The private key lives in the
 # keychain, not on disk; these patterns are defence in depth.

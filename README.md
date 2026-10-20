@@ -28,8 +28,9 @@ cd TeamsAwake
 ./install.sh
 ```
 
-Add `--with-launcher` if you want TeamsAwake to start automatically whenever
-Teams opens and quit when Teams quits.
+TeamsAwake stays running and hides its menu-bar icon while Teams is closed, so
+there is nothing to start when Teams opens. To have it running after a restart,
+turn on **Open at login** in its menu.
 
 The installer builds from source deliberately. A locally built app is not
 quarantined by Gatekeeper, so you never see an "unidentified developer" wall —
@@ -48,6 +49,37 @@ macOS requires explicit permission to reset the idle timer, so after installing:
 
 Until you do this the app runs but does nothing, and shows a warning triangle.
 
+TeamsAwake also warns you with an alert, once per episode, if access is lost
+while it is running (for example after an update), or if you are idle long
+enough to need a nudge and access is missing. Freshly installed and not yet
+granted, with nothing to nudge, it stays quiet until then.
+
+### Without the Xcode tools: install a release
+
+If you would rather not install the Command Line Tools (a large download), take
+the prebuilt app from the [Releases page](https://github.com/angmiayang/TeamsAwake/releases).
+It is a universal build, so it runs on Apple Silicon and Intel.
+
+1. Download `TeamsAwake-vX.Y.Z.zip` and its `.sha256` file into one folder, then
+   check the download: `shasum -a 256 -c TeamsAwake-vX.Y.Z.zip.sha256`
+2. Unzip it and move `TeamsAwake.app` to `/Applications`.
+3. Open it. macOS will block the first launch, because the app is not notarised
+   (that requires a paid Apple Developer account). Either open System Settings →
+   Privacy & Security and choose **Open Anyway**, or run:
+   `xattr -dr com.apple.quarantine /Applications/TeamsAwake.app`
+4. Then follow "The one manual step" above.
+
+Trade-offs, so you can choose knowingly:
+
+- You are running a binary from the internet. The checksum proves the file was not
+  corrupted in transit; it does not prove what the code does. Building from source
+  lets you read it first, and the code is short.
+- The release is signed ad-hoc, and macOS ties an Accessibility grant to the exact
+  signature. **Every update therefore needs the permission granted again.** After
+  replacing the app, run `tccutil reset Accessibility local.teamsawake`, then
+  grant access from the menu. Otherwise System Settings keeps showing an enabled
+  row that does nothing.
+
 ## The menu
 
 | Control | Does |
@@ -59,9 +91,8 @@ Until you do this the app runs but does nothing, and shows a warning triangle.
 | **Limits & schedule → Stop after no input for** | Never, 30 min, 1 h, 2 h or 4 h (default 1 h). See below. |
 | **Limits & schedule → Active hours** | Always (default), or a weekday or daily window. |
 | **Pause while screen is locked** | On by default, so locking your Mac still shows Away |
-| **Only while Teams is running** | On by default |
+| **Only while Teams app is running** | On by default. Turn it off if you use Teams in a browser tab. See below. |
 | **Hide icon when Teams is closed** | Icon appears and disappears with Teams |
-| **Quit when Teams quits** | Off by default; needs `--with-launcher` to come back |
 | **Icon size** | 15, 17 or 19pt |
 | **Open at login** | Registers a login item |
 | **Reset idle timer now** | One-shot test with a pass/fail alert |
@@ -72,6 +103,18 @@ Accessibility access.
 If the icon is hidden and you need the menu, reopen TeamsAwake from
 `/Applications`; that reveals it for 60 seconds. The icon is never hidden while
 Accessibility access is missing, so you cannot lock yourself out.
+
+## Teams in a browser
+
+TeamsAwake detects the Teams desktop app, and also Teams installed as a web app
+(a Chrome or Edge app, or Safari's "Add to Dock"), because those run as their own
+Dock app named "Microsoft Teams". Teams helper processes are ignored.
+
+A plain browser tab cannot be detected without reading your tab titles, which
+needs Automation permission and which TeamsAwake deliberately does not ask for.
+If you use Teams that way, turn **Only while Teams app is running** off. The icon
+then stays visible and nudging no longer depends on Teams being detected. Pair it
+with **Active hours** so it is not running all evening.
 
 ## How it works
 
@@ -114,9 +157,17 @@ On battery, lower the brightness or pause it when you do not need it.
 ./uninstall.sh
 ```
 
-Removes the app, the launch agent, support files, preferences and the
+Removes the app, any old launch agent, support files, preferences and the
 Accessibility entry. If you ran the optional signing script, it tells you how
 to remove that certificate too.
+
+Installed from a release and have no repo? Quit TeamsAwake, delete
+`/Applications/TeamsAwake.app`, then run:
+
+```bash
+tccutil reset Accessibility local.teamsawake
+defaults delete local.teamsawake
+```
 
 ## Caveats
 
@@ -150,6 +201,19 @@ machine. The private key is deleted from disk after import and kept only in
 your keychain. If you would rather not touch your trust store, skip it and
 accept one grant per rebuild. `build.sh` detects the identity automatically and
 falls back to ad-hoc signing when it is absent.
+
+### Publishing a release
+
+Pushing a version tag builds and publishes it, via `.github/workflows/release.yml`:
+
+```bash
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+The workflow runs the tests, builds a universal ad-hoc-signed app (version taken
+from the tag), refuses to publish unless both architectures are present, and
+attaches a zip and a SHA-256 file to a new release. It uses only
+`actions/checkout`, pinned to a commit, and the preinstalled `gh`.
 
 ## License
 

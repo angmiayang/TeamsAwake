@@ -26,11 +26,12 @@ enum System {
     }
 
     static var teamsIsRunning: Bool {
-        let ids: Set<String> = ["com.microsoft.teams2", "com.microsoft.teams"]
-        return NSWorkspace.shared.runningApplications.contains {
-            guard let b = $0.bundleIdentifier else { return false }
-            return ids.contains(b)
-        }
+        NSWorkspace.shared.runningApplications.contains(where: isTeams)
+    }
+
+    static func isTeams(_ app: NSRunningApplication) -> Bool {
+        TeamsMatch.isTeams(bundleID: app.bundleIdentifier, name: app.localizedName,
+                           isRegularApp: app.activationPolicy == .regular)
     }
 
     static var hasAccessibility: Bool { AXIsProcessTrusted() }
@@ -62,7 +63,7 @@ enum Prefs {
         "enabled": true, "thresholdSeconds": 170.0,
         "respectLock": true, "requireTeams": true,
         "iconPointSize": 17.0,
-        "followTeams": true, "quitWithTeams": false,
+        "followTeams": true,
         "capMinutes": 60.0,
         "activeHoursEnabled": false, "activeStart": 510, "activeEnd": 1080,
         "activeWeekdaysOnly": true,
@@ -80,8 +81,6 @@ enum Prefs {
         get { d.bool(forKey: "requireTeams") } set { d.set(newValue, forKey: "requireTeams") } }
     static var followTeams: Bool {
         get { d.bool(forKey: "followTeams") } set { d.set(newValue, forKey: "followTeams") } }
-    static var quitWithTeams: Bool {
-        get { d.bool(forKey: "quitWithTeams") } set { d.set(newValue, forKey: "quitWithTeams") } }
 
     /// Stop nudging after this many minutes with no real input; 0 = never.
     static var capMinutes: Double {
@@ -117,13 +116,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var revealUntil: Date?
     private var nudgeCount = 0
     private var governor = NudgeGovernor()
+    private var trustWatcher = TrustWatcher()
     private var preciseTimer: Timer?
 
     private let pollInterval: TimeInterval = 20
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        Prefs.registerDefaults()
-
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         menu.delegate = self
         statusItem.menu = menu
@@ -150,6 +148,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // revoked while running, and the early returns below must not strand
         // a stale glyph in the menu bar.
         defer { refreshIcon(); updateVisibility(); schedulePrecise() }
+
+        // Before any early return: losing access must be noticed even while
+        // paused, locked or outside active hours.
+        if let alert = trustWatcher.observe(trusted: System.hasAccessibility, nudgeNeeded: false) {
+            warnAboutAccess(alert)
+        }
 
         guard Prefs.enabled else { lastAction = "paused"; return }
 
@@ -180,7 +184,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             lastAction = "stopped — no input for \(Int(Prefs.capMinutes)) min, letting your Mac idle"
         case .nudge:
             guard System.hasAccessibility else {
-                lastAction = "BLOCKED — needs Accessibility access"; return
+                lastAction = "BLOCKED — needs Accessibility access"
+                if let alert = trustWatcher.observe(trusted: false, nudgeNeeded: true) {
+                    warnAboutAccess(alert)
+                }
+                return
             }
             if System.resetIdleTimer() {
                 governor.didNudge(at: now, idleBefore: idle)
@@ -207,12 +215,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         preciseTimer = t
     }
 
+    // MARK: access warning
+
+    /// A glyph change is easy to miss and the failure is silent, so interrupt once.
+    /// Deferred to the next run-loop turn: tick() must not sit inside a modal alert.
+    private func warnAboutAccess(_ kind: TrustWatcher.Alert) {
+        DispatchQueue.main.async { [weak self] in
+            let a = NSAlert()
+            a.alertStyle = .warning
+            switch kind {
+            case .lost:
+                a.messageText = "TeamsAwake lost Accessibility access"
+                a.informativeText = "macOS has stopped letting TeamsAwake reset the idle timer, so Teams will go Away when you are idle.\n\nThis usually follows a rebuild or update of the app, or access being switched off in System Settings. If the switch still looks on, select TeamsAwake in the list, remove it with the − button, and grant access again."
+            case .blocked:
+                a.messageText = "TeamsAwake cannot keep you Available"
+                a.informativeText = "You have been idle long enough for Teams to go Away, but TeamsAwake does not have Accessibility access, so macOS discarded its input event.\n\nGrant access, or remove a stale TeamsAwake entry with the − button and add it again."
+            }
+            a.addButton(withTitle: "Open Settings")
+            a.addButton(withTitle: "Later")
+            NSApp.activate(ignoringOtherApps: true)   // accessory apps are not frontmost by default
+            if a.runModal() == .alertFirstButtonReturn { self?.grantAccess() }
+        }
+    }
+
     // MARK: following Teams
 
     private func isTeams(_ n: Notification) -> Bool {
-        guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              let bid = app.bundleIdentifier else { return false }
-        return bid == "com.microsoft.teams2" || bid == "com.microsoft.teams"
+        guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        else { return false }
+        return System.isTeams(app)
     }
 
     @objc private func appLaunched(_ n: Notification) {
@@ -222,16 +253,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func appTerminated(_ n: Notification) {
         guard isTeams(n) else { return }
-        if Prefs.quitWithTeams { NSApp.terminate(nil); return }
         tick()
     }
 
     /// Hide the glyph while Teams is closed, but never hide it when setup is
     /// still incomplete or the user has just reopened the app to reach settings.
     private func updateVisibility() {
-        if !System.hasAccessibility { statusItem.isVisible = true; return }
-        if let until = revealUntil, until > Date() { statusItem.isVisible = true; return }
-        statusItem.isVisible = Prefs.followTeams ? System.teamsIsRunning : true
+        statusItem.isVisible = IconVisibility.shouldShow(
+            trusted: System.hasAccessibility,
+            revealed: (revealUntil ?? .distantPast) > Date(),
+            followTeams: Prefs.followTeams,
+            requireTeams: Prefs.requireTeams,
+            teamsRunning: System.teamsIsRunning)
     }
 
     /// Reopening the app from Finder reveals a hidden icon for a minute.
@@ -307,7 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(info(String(format: "Idle now: %.0fs", System.idleSeconds)))
         menu.addItem(info("Status: \(lastAction)"))
         menu.addItem(info("Resets this session: \(nudgeCount)"))
-        menu.addItem(info("Teams: \(System.teamsIsRunning ? "running" : "not running")"))
+        menu.addItem(info("Teams app: \(System.teamsIsRunning ? "detected" : "not detected")"))
 
         menu.addItem(.separator())
 
@@ -334,7 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lock.target = self; lock.state = Prefs.respectLock ? .on : .off
         menu.addItem(lock)
 
-        let needTeams = NSMenuItem(title: "Only while Teams is running",
+        let needTeams = NSMenuItem(title: "Only while Teams app is running",
                                    action: #selector(toggleRequireTeams), keyEquivalent: "")
         needTeams.target = self; needTeams.state = Prefs.requireTeams ? .on : .off
         menu.addItem(needTeams)
@@ -355,11 +388,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 action: #selector(toggleFollowTeams), keyEquivalent: "")
         follow.target = self; follow.state = Prefs.followTeams ? .on : .off
         menu.addItem(follow)
-
-        let quitWith = NSMenuItem(title: "Quit when Teams quits",
-                                  action: #selector(toggleQuitWithTeams), keyEquivalent: "")
-        quitWith.target = self; quitWith.state = Prefs.quitWithTeams ? .on : .off
-        menu.addItem(quitWith)
 
         let login = NSMenuItem(title: "Open at login",
                                action: #selector(toggleLoginItem), keyEquivalent: "")
@@ -462,9 +490,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: actions
 
-    @objc private func toggleEnabled() {
-        Prefs.enabled.toggle(); refreshIcon(); tick()
-    }
     @objc private func toggleRespectLock()  { Prefs.respectLock.toggle() }
 
     @objc private func pauseFor(_ sender: NSMenuItem) {
@@ -496,15 +521,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func toggleFollowTeams()  { Prefs.followTeams.toggle(); tick() }
 
-    @objc private func toggleQuitWithTeams() {
-        Prefs.quitWithTeams.toggle()
-        guard Prefs.quitWithTeams else { return }
-        let a = NSAlert()
-        a.messageText = "TeamsAwake will now quit with Teams"
-        a.informativeText = "Nothing will start it again on its own. To have it come back when Teams opens, install the companion launcher:\n\n./install.sh --with-launcher"
-        a.addButton(withTitle: "OK")
-        a.runModal()
-    }
     @objc private func toggleRequireTeams() { Prefs.requireTeams.toggle() }
 
     @objc private func setThreshold(_ sender: NSMenuItem) {
@@ -560,7 +576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 // MARK: - main
 
-Prefs.registerDefaults()
+Prefs.registerDefaults()   // once, before anything reads a preference
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

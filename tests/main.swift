@@ -91,5 +91,56 @@ check(ActiveHours.contains(date(2026,10,19,23,0), startMinute: 22*60, endMinute:
 check(ActiveHours.contains(date(2026,10,20,5,0),  startMinute: 22*60, endMinute: 6*60, weekdaysOnly: false, calendar: cal), "overnight window: 05:00 inside")
 check(!ActiveHours.contains(date(2026,10,20,12,0), startMinute: 22*60, endMinute: 6*60, weekdaysOnly: false, calendar: cal), "overnight window: noon outside")
 
+print("== TrustWatcher ==")
+do {
+    var w = TrustWatcher()
+    check(w.observe(trusted: true, nudgeNeeded: false) == nil, "trusted: silent")
+    check(w.observe(trusted: false, nudgeNeeded: false) == .lost, "trust lost mid-session: alerts")
+    check(w.observe(trusted: false, nudgeNeeded: false) == nil, "...only once")
+    check(w.observe(trusted: false, nudgeNeeded: true) == nil, "...even when a nudge is then blocked")
+    check(w.observe(trusted: true, nudgeNeeded: false) == nil, "regained: silent")
+    check(w.observe(trusted: false, nudgeNeeded: false) == .lost, "lost again after regaining: alerts again")
+}
+do {
+    var w = TrustWatcher()
+    check(w.observe(trusted: false, nudgeNeeded: false) == nil, "launched untrusted, nothing to nudge: quiet")
+    check(w.observe(trusted: false, nudgeNeeded: false) == nil, "...still quiet")
+    check(w.observe(trusted: false, nudgeNeeded: true) == .blocked, "launched untrusted, nudge blocked: alerts")
+    check(w.observe(trusted: false, nudgeNeeded: true) == nil, "...only once")
+}
+do {
+    var w = TrustWatcher()
+    _ = w.observe(trusted: true, nudgeNeeded: false)
+    check(w.observe(trusted: false, nudgeNeeded: true) == .lost, "loss and blocked nudge in one tick: single .lost alert")
+    check(w.observe(trusted: false, nudgeNeeded: true) == nil, "...no second alert")
+}
+
+print("== TeamsMatch ==")
+check(TeamsMatch.isTeams(bundleID: "com.microsoft.teams2", name: "Microsoft Teams", isRegularApp: true), "new Teams")
+check(TeamsMatch.isTeams(bundleID: "com.microsoft.teams", name: "Microsoft Teams classic", isRegularApp: true), "classic Teams")
+check(TeamsMatch.isTeams(bundleID: "com.microsoft.teams2", name: nil, isRegularApp: false), "native ID matches even without a name")
+check(TeamsMatch.isTeams(bundleID: "com.google.Chrome.app.abcdef", name: "Microsoft Teams", isRegularApp: true), "Chrome PWA")
+check(TeamsMatch.isTeams(bundleID: "com.microsoft.edgemac.app.abcdef", name: "Microsoft Teams (work or school)", isRegularApp: true), "Edge PWA with suffix")
+check(TeamsMatch.isTeams(bundleID: "com.apple.Safari.WebApp.UUID", name: "microsoft teams", isRegularApp: true), "Safari web app, case-insensitive")
+// The helpers observed on a real Mac: all must be rejected.
+check(!TeamsMatch.isTeams(bundleID: "com.microsoft.teams2.notificationcenter", name: "Microsoft Teams (Notification Center)", isRegularApp: false), "helper: notification center")
+check(!TeamsMatch.isTeams(bundleID: "com.microsoft.teams2.helper", name: "Microsoft Teams WebView", isRegularApp: false), "helper: WebView")
+check(!TeamsMatch.isTeams(bundleID: "com.microsoft.teams2.modulehost", name: "Microsoft Teams ModuleHost", isRegularApp: false), "helper: module host")
+check(!TeamsMatch.isTeams(bundleID: "local.teamsawake", name: "TeamsAwake", isRegularApp: false), "TeamsAwake itself is not Teams")
+check(!TeamsMatch.isTeams(bundleID: "com.apple.Safari", name: "Safari", isRegularApp: true), "unrelated app")
+check(!TeamsMatch.isTeams(bundleID: nil, name: nil, isRegularApp: true), "no identity at all")
+check(!TeamsMatch.isTeams(bundleID: "com.example.x", name: "Teams Practice Planner", isRegularApp: true), "another app with 'Teams' in its name")
+
+print("== IconVisibility ==")
+func vis(_ t: Bool, _ r: Bool, _ f: Bool, _ q: Bool, _ run: Bool) -> Bool {
+    IconVisibility.shouldShow(trusted: t, revealed: r, followTeams: f, requireTeams: q, teamsRunning: run)
+}
+check(vis(true, false, true, true, true),   "Teams open: shown")
+check(!vis(true, false, true, true, false), "Teams closed, follow + require: hidden")
+check(vis(true, false, true, false, false), "require off (browser-tab user): stays shown")
+check(vis(true, false, false, true, false), "follow off: always shown")
+check(vis(false, false, true, true, false), "no Accessibility access: shown so setup is reachable")
+check(vis(true, true, true, true, false),   "revealed by reopening the app: shown")
+
 print(failures == 0 ? "\nALL PASSED" : "\n\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

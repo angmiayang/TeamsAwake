@@ -15,7 +15,8 @@ echo
 osascript -e "tell application \"$APP\" to quit" 2>/dev/null || true
 pkill -x "$APP" 2>/dev/null || true
 
-# Launch agents, including any from older versions that used a per-user label.
+# Launcher agents from older versions (the launcher no longer exists, but an
+# earlier install may have left one behind).
 for A in "$AGENT" "$HOME/Library/LaunchAgents/local.$(id -un).teamsawake.launcher.plist"; do
   if [ -f "$A" ]; then
     launchctl unload "$A" 2>/dev/null || true
@@ -32,7 +33,7 @@ fi
 # Keep the signing folder: it holds a certificate the user may have chosen to
 # trust, and removing that needs their explicit action (see the note below).
 if [ -d "$SUPPORT" ]; then
-  rm -f "$SUPPORT/launcher.sh"
+  rm -f "$SUPPORT/launcher.sh" "$SUPPORT/teamsawake-launcher.sh"
   rmdir "$SUPPORT" 2>/dev/null && echo "  removed $SUPPORT"
 fi
 

@@ -63,3 +63,57 @@ enum ActiveHours {
         return m >= startMinute || m < endMinute
     }
 }
+
+/// Decides when to interrupt the user about missing Accessibility access.
+///
+/// A glyph change alone is easy to miss, and the failure is silent: the app keeps
+/// running while Teams quietly goes Away. So warn once per "no access" episode,
+/// when it matters: access is lost mid-session, or a nudge was needed but blocked.
+/// Opening the app untrusted, with nothing to nudge, stays quiet so a fresh
+/// install is not nagged before the user has had a chance to grant access.
+struct TrustWatcher {
+    enum Alert { case lost, blocked }
+
+    private var wasTrusted: Bool?     // nil until the first observation
+    private var alerted = false       // already warned during this episode
+
+    mutating func observe(trusted: Bool, nudgeNeeded: Bool) -> Alert? {
+        defer { wasTrusted = trusted }
+        if trusted { alerted = false; return nil }       // episode over; re-arm
+        guard !alerted else { return nil }
+        if wasTrusted == true { alerted = true; return .lost }
+        if nudgeNeeded { alerted = true; return .blocked }
+        return nil
+    }
+}
+
+/// Recognises Microsoft Teams among running applications.
+enum TeamsMatch {
+    /// New Teams, then classic Teams. Matched exactly: Teams runs helper
+    /// processes under related IDs (notification center, WebView, module host)
+    /// that must not count as "Teams is open".
+    static let nativeBundleIDs: Set<String> = ["com.microsoft.teams2", "com.microsoft.teams"]
+
+    /// - Parameter isRegularApp: true for an ordinary Dock app. Required for the
+    ///   name match, because Teams' helpers are also named "Microsoft Teams ..."
+    ///   but run as accessory or background-only processes and can outlive Teams.
+    static func isTeams(bundleID: String?, name: String?, isRegularApp: Bool) -> Bool {
+        if let b = bundleID, nativeBundleIDs.contains(b) { return true }
+        // Teams installed as a web app (Chrome or Edge PWA, Safari "Add to Dock")
+        // is its own Dock app with a browser-generated bundle ID, named for the site.
+        guard isRegularApp, let n = name else { return false }
+        return n.lowercased().hasPrefix("microsoft teams")
+    }
+}
+
+/// When the menu-bar icon should be visible.
+enum IconVisibility {
+    /// Hide only when the app is idle *because* Teams is absent. If the user has
+    /// turned "Only while Teams is running" off (e.g. they use Teams in a browser
+    /// tab, which cannot be detected), the app keeps working, so its icon stays.
+    static func shouldShow(trusted: Bool, revealed: Bool, followTeams: Bool,
+                           requireTeams: Bool, teamsRunning: Bool) -> Bool {
+        if !trusted || revealed { return true }   // never lock the user out of setup
+        return !(followTeams && requireTeams && !teamsRunning)
+    }
+}
