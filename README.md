@@ -19,7 +19,7 @@ Because it never calls a presence API, it cannot overwrite Busy or a call.
 
 ## Install
 
-Requires macOS 13 or later and the Xcode Command Line Tools
+Requires macOS 13 or later (Apple Silicon or Intel) and the Xcode Command Line Tools
 (`xcode-select --install` if you do not have them).
 
 ```bash
@@ -42,8 +42,9 @@ macOS requires explicit permission to reset the idle timer, so after installing:
 1. Quit System Settings completely if it is open (Cmd-Q).
 2. Click the TeamsAwake icon in your menu bar.
 3. Choose **Grant Accessibility access…** and approve the prompt.
-4. Click the icon again, choose **Reset idle timer now**, and confirm it says
-   "Working".
+4. Click the icon again and choose **Reset idle timer now**. "Working" means
+   Accessibility access is granted and a test event was posted; "Not working"
+   means it is not granted yet.
 
 Until you do this the app runs but does nothing, and shows a warning triangle.
 
@@ -53,7 +54,10 @@ Until you do this the app runs but does nothing, and shows a warning triangle.
 |---|---|
 | **Keep me Available** | Master on/off switch |
 | Idle now / Status / Resets | Live diagnostics |
-| **Go active after** | 2, 3 or 4 minutes. Teams flips to Away at about 5. |
+| **Pause…** | 30 min, 1 h, 2 h, or until 06:00 tomorrow. Resumes by itself; **Resume now** appears while paused. |
+| **Go active after** | 2, 3 or 4 minutes. Teams usually goes Away after about 5. The nudge fires at exactly this idle time. |
+| **Limits & schedule → Stop after no input for** | Never, 30 min, 1 h, 2 h or 4 h (default 1 h). See below. |
+| **Limits & schedule → Active hours** | Always (default), or a weekday or daily window. |
 | **Pause while screen is locked** | On by default, so locking your Mac still shows Away |
 | **Only while Teams is running** | On by default |
 | **Hide icon when Teams is closed** | Icon appears and disappears with Teams |
@@ -82,9 +86,27 @@ pixels.
 display sleep, but does not reset the idle timer, which is the value Teams
 actually reads.
 
-Your display will not sleep while this is running, because the nudge counts as
-activity. On battery, lower the brightness or turn the switch off when you do
-not need it.
+Because the nudge counts as activity, your display will not sleep, the screen
+saver will not start, and a "require password after screen saver" setting will
+never trigger while TeamsAwake is nudging. Two settings bound that:
+
+- **Stop after no input for** (default 1 hour): once nobody has touched the Mac
+  for that long, TeamsAwake stops nudging and your Mac idles, sleeps and locks
+  normally. Real input resets it. It detects real input by comparing the last
+  input time with the moment of its own last nudge.
+- **Active hours**: outside the window it does nothing, so evenings and
+  weekends behave as if it were not installed.
+
+Custom active hours, in minutes since midnight (here 07:00 to 19:00, weekdays):
+
+```bash
+defaults write local.teamsawake activeHoursEnabled -bool true
+defaults write local.teamsawake activeStart -int 420
+defaults write local.teamsawake activeEnd -int 1140
+defaults write local.teamsawake activeWeekdaysOnly -bool true
+```
+
+On battery, lower the brightness or pause it when you do not need it.
 
 ## Uninstall
 
@@ -113,7 +135,8 @@ agent, with no GUI. Useful headless or over SSH. It needs `cliclick`
 
 ## Working on the code
 
-`./scripts/build.sh` builds into `./build` without installing.
+`./scripts/build.sh` builds a universal binary into `./build` without installing.
+`./scripts/test.sh` runs the unit tests for the decision logic.
 
 Each rebuild re-signs the app, and macOS ties an Accessibility grant to the
 code signature, so you will be asked to grant permission again every time.

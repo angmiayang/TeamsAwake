@@ -58,10 +58,26 @@ swiftc -swift-version 5 -O -framework AppKit src/makeicon.swift -o build/makeico
 (cd build && ./makeicon)
 iconutil -c icns build/AppIcon.iconset -o build/AppIcon.icns
 
+# Universal binary, so the same build runs on Apple Silicon and Intel Macs.
+# The native architecture must build; the other is best-effort, because
+# cross-compiling can fail on an SDK that lacks it.
 echo "==> compiling"
-swiftc -swift-version 5 -O -target arm64-apple-macos13.0 \
-  -framework AppKit -framework ServiceManagement \
-  src/main.swift -o "$OUT/Contents/MacOS/$APP_NAME"
+build_arch() {
+  swiftc -swift-version 5 -O -target "$1-apple-macos13.0" \
+    -framework AppKit -framework ServiceManagement \
+    src/governor.swift src/main.swift -o "build/$APP_NAME.$1"
+}
+NATIVE="$(uname -m)"
+if [ "$NATIVE" = "arm64" ]; then OTHER="x86_64"; else OTHER="arm64"; fi
+BIN="$OUT/Contents/MacOS/$APP_NAME"
+build_arch "$NATIVE"
+if build_arch "$OTHER" 2>/dev/null; then
+  lipo -create "build/$APP_NAME.arm64" "build/$APP_NAME.x86_64" -output "$BIN"
+  echo "    architectures: $(lipo -archs "$BIN")"
+else
+  cp "build/$APP_NAME.$NATIVE" "$BIN"
+  echo "    warning: could not also build $OTHER; this build runs on $NATIVE only."
+fi
 
 cp build/AppIcon.icns "$OUT/Contents/Resources/AppIcon.icns"
 
